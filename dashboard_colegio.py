@@ -2,6 +2,8 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import openpyxl
+from fpdf import FPDF
+from datetime import datetime
 
 st.set_page_config(page_title="Control de Asistencias - Unidad Educativa Caranqui", layout="wide")
 
@@ -48,30 +50,42 @@ def procesar_todo_el_excel(ruta_archivo):
         mes_actual = None
         
         for idx, row in df_hoja.iterrows():
-            if len(row) < 2:
-                continue
-                
-            valor_celda_1 = str(row.iloc[0]).strip().upper()
-            valor_celda_2 = str(row.iloc[1]).strip().upper()
+            valores_fila = [str(x).strip().upper() for x in row.values if pd.notna(x)]
             
-            if "ASISTENCIA" in valor_celda_1 or "ASISTENCIA" in valor_celda_2:
+            if not valores_fila:
                 continue
                 
-            if valor_celda_1 in meses_dict:
-                mes_actual = valor_celda_1
+            texto_unido = " ".join(valores_fila)
+            if "ASISTENCIA" in texto_unido and "AÑO" in texto_unido:
                 continue
                 
-            if "ESTUDIANTE" in valor_celda_2 or "N°" in valor_celda_1:
+            encontró_mes = False
+            for palabra in valores_fila:
+                if palabra in meses_dict:
+                    mes_actual = palabra
+                    encontró_mes = True
+                    break
+            if encontró_mes:
                 continue
                 
-            estudiante = row.iloc[1]
-            if pd.notna(estudiante) and str(estudiante).strip() != "":
-                nom_estudiante = str(estudiante).strip().upper()
-                if "TOTAL" in nom_estudiante or "ESTUDIANTE" in nom_estudiante or nom_estudiante in ["0", "0.0"]:
-                    continue
+            if "ESTUDIANTE" in texto_unido or "N°" in texto_unido or "PRES." in texto_unido:
+                continue
+                
+            estudiante = None
+            col_estudiante_idx = -1
+            
+            for i, celda in enumerate(row.values):
+                celda_str = str(celda).strip()
+                if pd.notna(celda) and celda_str != "" and not celda_str.replace(".","").isdigit():
+                    if "TOTAL" in celda_str.upper() or "ESTUDIANTE" in celda_str.upper():
+                        break
+                    estudiante = celda_str
+                    col_estudiante_idx = i
+                    break
                     
+            if estudiante and mes_actual:
                 for dia in range(1, 32):
-                    col_idx = dia + 1
+                    col_idx = col_estudiante_idx + dia
                     if col_idx < len(row):
                         estado = row.iloc[col_idx]
                         
@@ -84,8 +98,8 @@ def procesar_todo_el_excel(ruta_archivo):
                             lista_registros.append({
                                 "Año": año,
                                 "Curso": curso,
-                                "Estudiante": str(estudiante).strip(),
-                                "Mes": mes_actual if mes_actual else "NO ESPECIFICADO",
+                                "Estudiante": estudiante,
+                                "Mes": mes_actual,
                                 "Dia": dia,
                                 "Estado": estado_final
                             })
@@ -104,7 +118,7 @@ try:
     df_asistencias = procesar_todo_el_excel(ARCHIVO_EXCEL)
     
     if df_asistencias.empty:
-        st.error("No se pudieron extraer registros. Compruebe la estructura de las hojas del archivo Excel.")
+        st.error("No se pudieron extraer registros. Compruebe que el archivo 'Asistencia_Escolar_CORREGIDA_FINAL.xlsx' no esté vacío o abierto en Excel.")
     else:
         st.sidebar.header("Filtros de Control")
         
@@ -126,6 +140,85 @@ try:
             porcentaje_asistencia = (asistencias_ok / total_registros) * 100
             total_faltas = len(df_final_display[df_final_display['Estado'] == 'A'])
             total_atrasos = len(df_final_display[df_final_display['Estado'] == 'T'])
+            
+            ranking_calculo = df_final_display.groupby(['Curso', 'Estudiante', 'Estado_Nombre']).size().unstack(fill_value=0).reset_index()
+            
+            def generar_reporte_pdf(df_kpis, año_sel, curso_sel, t_asistencia, t_faltas, t_atrasos, df_ranking):
+                pdf = FPDF()
+                pdf.add_page()
+                pdf.set_font("Helvetica", "B", 16)
+                
+                pdf.cell(0, 10, "UNIDAD EDUCATIVA CARANQUI", ln=True, align="C")
+                pdf.set_font("Helvetica", "", 12)
+                pdf.cell(0, 8, f"Reporte de Control de Asistencias - Periodo {año_sel}", ln=True, align="C")
+                pdf.cell(0, 6, f"Filtro aplicado: {curso_sel}", ln=True, align="C")
+                pdf.cell(0, 6, f"Fecha de emision: {datetime.now().strftime('%d/%m/%Y')}", ln=True, align="C")
+                pdf.ln(10)
+                
+                pdf.set_font("Helvetica", "B", 12)
+                pdf.cell(0, 8, "1. RESUMEN ESTADISTICO GENERAL", ln=True)
+                pdf.line(10, pdf.get_y(), 200, pdf.get_y())
+                pdf.ln(4)
+                
+                pdf.set_font("Helvetica", "", 11)
+                pdf.cell(90, 8, f"Tasa de Asistencia Promedio:", border=0)
+                pdf.set_font("Helvetica", "B", 11)
+                pdf.cell(0, 8, f"{t_asistencia:.1f}%", border=0, ln=True)
+                
+                pdf.cell(90, 8, f"Total Inasistencias (Faltas):", border=0)
+                pdf.set_font("Helvetica", "B", 11)
+                pdf.cell(0, 8, f"{t_faltas:,}", border=0, ln=True)
+                
+                pdf.set_font("Helvetica", "", 11)
+                pdf.cell(90, 8, f"Total de Atrasos Registrados:", border=0)
+                pdf.set_font("Helvetica", "B", 11)
+                pdf.cell(0, 8, f"{t_atrasos:,}", border=0, ln=True)
+                pdf.ln(10)
+                
+                pdf.set_font("Helvetica", "B", 12)
+                pdf.cell(0, 8, "2. ALERTA TEMPRANA: ESTUDIANTES CON MAYOR AUSENTISMO", ln=True)
+                pdf.line(10, pdf.get_y(), 200, pdf.get_y())
+                pdf.ln(4)
+                
+                if 'Ausente (Falta)' in df_ranking.columns and len(df_ranking) > 0:
+                    pdf.set_font("Helvetica", "B", 10)
+                    pdf.cell(40, 8, "Curso", border=1, align="C")
+                    pdf.cell(110, 8, "Estudiante", border=1)
+                    pdf.cell(40, 8, "Faltas Injust.", border=1, align="C", ln=True)
+                    
+                    pdf.set_font("Helvetica", "", 9)
+                    ranking_top = df_ranking.sort_values(by='Ausente (Falta)', ascending=False).head(15)
+                    for _, fila in ranking_top.iterrows():
+                        pdf.cell(40, 7, str(fila['Curso']), border=1, align="C")
+                        pdf.cell(110, 7, str(fila['Estudiante'])[:55], border=1)
+                        pdf.cell(40, 7, str(int(fila['Ausente (Falta)'])), border=1, align="C", ln=True)
+                else:
+                    pdf.set_font("Helvetica", "I", 10)
+                    pdf.cell(0, 8, "No se registran faltas en el grupo seleccionado.", ln=True)
+                    
+                pdf.ln(20)
+                pdf.set_font("Helvetica", "", 10)
+                pdf.cell(95, 8, "_________________________", ln=0, align="C")
+                pdf.cell(95, 8, "_________________________", ln=1, align="C")
+                pdf.cell(95, 5, "Inspector / Responsable", ln=0, align="C")
+                pdf.cell(95, 5, "Rectorado / Direccion", ln=1, align="C")
+                
+                # Modificación crítica aquí: Forzar conversión a bytes limpia
+                return bytes(pdf.output())
+
+            pdf_bytes = generar_reporte_pdf(
+                df_final_display, filtro_año, filtro_curso, 
+                porcentaje_asistencia, total_faltas, total_atrasos, ranking_calculo
+            )
+            
+            st.sidebar.markdown("---")
+            st.sidebar.subheader("Exportar Documento")
+            st.sidebar.download_button(
+                label="Descargar PDF para Imprimir",
+                data=pdf_bytes,
+                file_name=f"Reporte_Asistencia_{filtro_curso.replace(' ', '_')}_{filtro_año}.pdf",
+                mime="application/pdf"
+            )
             
             kpi1, kpi2, kpi3 = st.columns(3)
             kpi1.metric(label="Tasa de Asistencia Promedio", value=f"{porcentaje_asistencia:.1f}%")
@@ -166,11 +259,10 @@ try:
             st.markdown("---")
             
             st.subheader("Alerta Temprana: Estudiantes con Mayor Cantidad de Faltas")
-            ranking = df_final_display.groupby(['Curso', 'Estudiante', 'Estado_Nombre']).size().unstack(fill_value=0).reset_index()
-            if 'Ausente (Falta)' in ranking.columns:
-                ranking = ranking.sort_values(by='Ausente (Falta)', ascending=False).head(15)
-                ranking = ranking.rename(columns={'Ausente (Falta)': 'Faltas Injustificadas'})
-                st.dataframe(ranking[['Curso', 'Estudiante', 'Faltas Injustificadas']], use_container_width=True)
+            if 'Ausente (Falta)' in ranking_calculo.columns:
+                ranking_display = ranking_calculo.sort_values(by='Ausente (Falta)', ascending=False).head(15)
+                ranking_display = ranking_display.rename(columns={'Ausente (Falta)': 'Faltas Injustificadas'})
+                st.dataframe(ranking_display[['Curso', 'Estudiante', 'Faltas Injustificadas']], use_container_width=True)
             else:
                 st.info("No se registran inasistencias en este grupo.")
         else:
