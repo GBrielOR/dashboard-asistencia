@@ -212,13 +212,16 @@ def _cell(pdf, w, h, txt, bold=False, align="L", border=0, new_x=XPos.LMARGIN, n
     """Wrapper para pdf.cell con nueva API de fpdf2."""
     pdf.cell(w, h, txt, border=border, align=align, new_x=new_x, new_y=new_y)
 
-
 def generar_reporte_pdf(año_sel, curso_sel, t_asistencia, t_faltas, t_atrasos,
-                        df_ranking, img_pastel=None, img_barra=None):
+                       df_ranking, img_pastel=None, img_barra=None):
     pdf = FPDF()
+    
+    # ─────────────────────────────────────────────────────────────────────────
+    # PÁGINA 1: RESUMEN ESTADÍSTICO Y ALERTA TEMPRANA (TABLA)
+    # ─────────────────────────────────────────────────────────────────────────
     pdf.add_page()
 
-    # ── Encabezado ────────────────────────────────────────────────────────────
+    # Encabezado institucional
     pdf.set_font("Helvetica", "B", 16)
     pdf.cell(0, 10, "UNIDAD EDUCATIVA CARANQUI",
              new_x=XPos.LMARGIN, new_y=YPos.NEXT, align="C")
@@ -230,9 +233,9 @@ def generar_reporte_pdf(año_sel, curso_sel, t_asistencia, t_faltas, t_atrasos,
              new_x=XPos.LMARGIN, new_y=YPos.NEXT, align="C")
     pdf.cell(0, 6, f"Fecha de emision: {datetime.now().strftime('%d/%m/%Y')}",
              new_x=XPos.LMARGIN, new_y=YPos.NEXT, align="C")
-    pdf.ln(10)
+    pdf.ln(8)
 
-    # ── Sección 1: Resumen estadístico ────────────────────────────────────────
+    # 1. Resumen estadístico
     pdf.set_font("Helvetica", "B", 12)
     pdf.cell(0, 8, "1. RESUMEN ESTADISTICO GENERAL",
              new_x=XPos.LMARGIN, new_y=YPos.NEXT)
@@ -246,21 +249,51 @@ def generar_reporte_pdf(año_sel, curso_sel, t_asistencia, t_faltas, t_atrasos,
     ]
     for label, valor in datos_kpi:
         pdf.set_font("Helvetica", "", 11)
-        pdf.cell(90, 8, label, new_x=XPos.RIGHT, new_y=YPos.LAST)
+        pdf.cell(90, 7, label, new_x=XPos.RIGHT, new_y=YPos.LAST)
         pdf.set_font("Helvetica", "B", 11)
-        pdf.cell(0, 8, valor, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-    pdf.ln(8)
+        pdf.cell(0, 7, valor, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.ln(6)
 
-    # ── Sección 2: Gráficos ───────────────────────────────────────────────────
+    # 2. Alerta temprana (Ahora va inmediatamente debajo de los KPIs)
+    pdf.set_font("Helvetica", "B", 12)
+    pdf.cell(0, 8, "2. ALERTA TEMPRANA: ESTUDIANTES CON MAYOR AUSENTISMO",
+             new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.line(10, pdf.get_y(), 200, pdf.get_y())
+    pdf.ln(4)
+
+    if 'Ausente (Falta)' in df_ranking.columns and len(df_ranking) > 0:
+        # Encabezados de la tabla
+        pdf.set_font("Helvetica", "B", 10)
+        pdf.cell(40, 7, "Curso",         border=1, align="C", new_x=XPos.RIGHT, new_y=YPos.LAST)
+        pdf.cell(110, 7, "Estudiante",   border=1, align="L", new_x=XPos.RIGHT, new_y=YPos.LAST)
+        pdf.cell(40, 7, "Faltas Injust.",border=1, align="C", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+
+        # Contenido limitado a los primeros 12-15 alumnos para asegurar que entre en la hoja 1
+        pdf.set_font("Helvetica", "", 9)
+        ranking_top = df_ranking.sort_values(by='Ausente (Falta)', ascending=False).head(13)
+        for _, fila in ranking_top.iterrows():
+            pdf.cell(40,  6, str(fila['Curso']),                    border=1, align="C", new_x=XPos.RIGHT,  new_y=YPos.LAST)
+            pdf.cell(110, 6, str(fila['Estudiante'])[:55],          border=1, align="L", new_x=XPos.RIGHT,  new_y=YPos.LAST)
+            pdf.cell(40,  6, str(int(fila['Ausente (Falta)'])),     border=1, align="C", new_x=XPos.LMARGIN,new_y=YPos.NEXT)
+    else:
+        pdf.set_font("Helvetica", "I", 10)
+        pdf.cell(0, 7, "No se registran faltas en el grupo seleccionado.",
+                 new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # PÁGINA 2: GRÁFICOS Y FIRMAS
+    # ─────────────────────────────────────────────────────────────────────────
     if img_pastel is not None or img_barra is not None:
+        pdf.add_page()  # Enviamos los gráficos limpios a la siguiente página
+
         pdf.set_font("Helvetica", "B", 12)
-        pdf.cell(0, 8, "2. GRAFICOS DE ASISTENCIA",
+        pdf.cell(0, 8, "3. GRAFICOS DE ASISTENCIA",
                  new_x=XPos.LMARGIN, new_y=YPos.NEXT)
         pdf.line(10, pdf.get_y(), 200, pdf.get_y())
-        pdf.ln(4)
+        pdf.ln(6)
 
-        ancho_grafico = 92   # mm — dos gráficos lado a lado en A4
-        alto_grafico = 65    # mm — Altura fija calculada para evitar colisiones
+        ancho_grafico = 92   # mm
+        alto_grafico = 65    # mm
         y_antes = pdf.get_y()
 
         if img_pastel:
@@ -271,37 +304,14 @@ def generar_reporte_pdf(año_sel, curso_sel, t_asistencia, t_faltas, t_atrasos,
             img_barra.seek(0)
             pdf.image(img_barra, x=108, y=y_antes, w=ancho_grafico, h=alto_grafico)
 
-        # CRUCIAL: Forzamos al cursor a saltar abajo del gráfico más su leyenda
-        pdf.set_y(y_antes + alto_grafico + 15) 
-        pdf.ln(5)
+        # Movemos el cursor debajo de los gráficos para estampar las firmas
+        pdf.set_y(y_antes + alto_grafico + 20)
 
-    # ── Sección 3: Alerta temprana ────────────────────────────────────────────
-    seccion = "3" if (img_pastel is not None or img_barra is not None) else "2"
-    pdf.set_font("Helvetica", "B", 12)
-    pdf.cell(0, 8, f"{seccion}. ALERTA TEMPRANA: ESTUDIANTES CON MAYOR AUSENTISMO",
-             new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-    pdf.line(10, pdf.get_y(), 200, pdf.get_y())
-    pdf.ln(4)
-
-    if 'Ausente (Falta)' in df_ranking.columns and len(df_ranking) > 0:
-        pdf.set_font("Helvetica", "B", 10)
-        pdf.cell(40, 8, "Curso",         border=1, align="C", new_x=XPos.RIGHT, new_y=YPos.LAST)
-        pdf.cell(110, 8, "Estudiante",   border=1, align="L", new_x=XPos.RIGHT, new_y=YPos.LAST)
-        pdf.cell(40, 8, "Faltas Injust.",border=1, align="C", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-
-        pdf.set_font("Helvetica", "", 9)
-        ranking_top = df_ranking.sort_values(by='Ausente (Falta)', ascending=False).head(15)
-        for _, fila in ranking_top.iterrows():
-            pdf.cell(40,  7, str(fila['Curso']),                    border=1, align="C", new_x=XPos.RIGHT,  new_y=YPos.LAST)
-            pdf.cell(110, 7, str(fila['Estudiante'])[:55],          border=1, align="L", new_x=XPos.RIGHT,  new_y=YPos.LAST)
-            pdf.cell(40,  7, str(int(fila['Ausente (Falta)'])),     border=1, align="C", new_x=XPos.LMARGIN,new_y=YPos.NEXT)
     else:
-        pdf.set_font("Helvetica", "I", 10)
-        pdf.cell(0, 8, "No se registran faltas en el grupo seleccionado.",
-                 new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        # En caso de que no existan imágenes por algún error, dejamos las firmas en la pág 1
+        pdf.ln(15)
 
-    # ── Firmas ────────────────────────────────────────────────────────────────
-    pdf.ln(20)
+    # Bloque de Firmas (Ahora queda fijo en la parte inferior de la página de gráficos)
     pdf.set_font("Helvetica", "", 10)
     pdf.cell(95, 8, "_________________________", new_x=XPos.RIGHT, new_y=YPos.LAST, align="C")
     pdf.cell(95, 8, "_________________________", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align="C")
@@ -309,8 +319,6 @@ def generar_reporte_pdf(año_sel, curso_sel, t_asistencia, t_faltas, t_atrasos,
     pdf.cell(95, 5, "Rectorado / Direccion",     new_x=XPos.LMARGIN, new_y=YPos.NEXT, align="C")
 
     return bytes(pdf.output())
-
-
 # ─────────────────────────────────────────────────────────────────────────────
 # APLICACIÓN PRINCIPAL
 # ─────────────────────────────────────────────────────────────────────────────
